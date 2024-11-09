@@ -1,0 +1,1 @@
+A C/C++ chat application for inter-process communication using named pipes, developed for the "INFO-F-201: Operating Systems" course. Includes a chat program for real-time messaging between two users and a chat-bot Bash script to act as an automated responder.
