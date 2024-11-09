@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,6 +73,5 @@ int main(int argc, char* argv[]){
 
     return 0;
 }
-=======
->>>>>>> 4dbbb8a0c0abb42675841a04b9861a44e40396d8
+
 
