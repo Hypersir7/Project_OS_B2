@@ -1,0 +1,77 @@
+#!/bin/bash
+
+RESPONSE_FILE="liste-bot.txt"
+
+if [[ $# -gt 2 ]]; then #Verifies the number of arguments given, if more than 2, send out an error to sterr
+    echo "<< chat-bot destinataire [pseudo] >>" >&2
+    exit 1
+fi
+
+username=$1
+bot_name=${2:-bot}
+
+
+function chat_bot() {
+    echo "in chat bot"
+    while read -r input; do
+        echo "inside while loop"
+        case "$input" in
+            liste)
+                while read -r line; do
+                    echo "$line"
+                done < <(ls)
+                ;;
+            li*)
+                file=$(echo "${input#li}" | xargs) # xargs is for removing spaces (leading/trailing)
+                if [[ -f "$file" && -r "$file" ]]; then #exists? readable?
+                    cat "$file"
+                else
+                    echo "Sorry, this file doesn't exist or the file isn't readable" >&2
+                    exit 2
+                fi
+                ;;
+            "qui suis-je")
+                echo "$username"
+                ;;
+            
+            "au revoir")
+                echo "Au revoir!"
+                exit 0
+                ;;
+            *)
+                if grep -q "$input" "$RESPONSE_FILE"; then #Reminder to implement check -r for response-file and if it exists ofc
+                    # if that word is found in RESPONSE_FILE
+                    grep "$input" "$RESPONSE_FILE" | while read -r line; do
+                        # Extract everything after the first space in the line
+                        # cuz reponse starts after 1st space
+                        answer="${line#* } "
+                        echo "$answer"
+                    done
+                else
+                    echo "🤖 ?"
+                fi
+                ;;
+        esac
+    done
+}
+
+echo "Starting ./chat with bot_name=$bot_name and username=$username" #FOR DEBUG DELETE LATER
+coproc CHAT_BOT_PIPES { ./chat "$bot_name" "$username" --bot; } #Init coproc
+
+if [[ -z "${CHAT_BOT_PIPES_PID}" ]]; then #Check if coproc succeded
+    echo "[ERROR] Failed to start coprocess."
+    exit 1
+fi
+
+./chat $username $bot_name
+while read -r bot_response <&"${CHAT_BOT_PIPES[0]}"; do # Send stdin of /chat bot user to bot_response variable
+    echo "[ChatBot]: $bot_response"
+    echo "$bot_response" | chat_bot >&"${CHAT_BOT_PIPES[1]}" # Process response using chat bot and send it to std in of /chat bot user
+done
+
+wait "${CHAT_BOT_PIPES_PID}" #Wait for the process to terminate before continuing
+
+
+# Clean up
+exec {CHAT_BOT_PIPES[0]}>&-  # Close read end
+exec {CHAT_BOT_PIPES[1]}>&-  # Close write end
