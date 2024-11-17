@@ -1,68 +1,139 @@
 #!/bin/bash
 
-RESPONSE_FILE="liste-bot.txt"
+init_variables(){
+    #fonction intialisant les variables globaux   
+    ROBOT_DEFAULT_NAME="bot"
+    RECEIVER="$1"
+    ROBOT="${2:-$ROBOT_DEFAULT_NAME}"
 
-if [[ $# -gt 2 ]]; then #Verifies the number of arguments given, if more than 2, send out an error to sterr
-    echo "<< chat-bot destinataire [pseudo] >>" >&2
-    exit 1
-fi
+}
 
-username=$1
-bot_name=${2:-bot}
-# Create named pipes
-mkfifo pipe1 pipe2
+create_communication_pipes(){
+    SENDER_PIPE="/tmp/${ROBOT}-${RECEIVER}.chat"
+    RECEIVER_PIPE="/tmp/${RECEIVER}-${ROBOT}.chat"
+    # -p fichier de type pipe fifo
+    # creation du pipe d'envoie
+    if [[ ! -p "$SENDER_PIPE" ]] 
+    then
+        mkfifo -m 0666 "$SENDER_PIPE"
+        #echo "[SUCESS] : created $SENDER_PIPE"
+    fi
+    # creation du pipe de reception
+    if [[ ! -p "$RECEIVER_PIPE" ]] 
+    then
+        mkfifo -m 0666 "$RECEIVER_PIPE"
+        #echo "[SUCESS] : created $RECEIVER_PIPE"
+    fi
+    
+}
 
-function chat_bot() {
-    input="$@"
-    case "$input" in
-        liste)
-            while read -r line; do
-                echo "$line"
-            done < <(ls)
+cleanup_pipes(){
+    rm -f "$RECEIVER_PIPE" "$SENDER_PIPE"
+    echo "[CLEANUP] : Deleted pipes $SENDER_PIPE and $RECEIVER_PIPE from Filesystem!"
+}
+
+#fonction pour enovyer les messages au destinataire
+send_message(){
+    local msg="$1" # le message est le 1er param..
+    echo "$msg" > "$SENDER_PIPE"
+}
+
+#fonction pour lire les messages du destinataire
+read_message(){
+    local msg
+    read -r msg < "$RECEIVER_PIPE"
+    echo "$msg"
+}
+
+#fonction executer la command 'liste'
+list_current_directory(){
+    send_message "$(ls)"
+}
+
+#fonnction pour lire un fichier --> commande 'li'
+read_file(){
+    local to_read_file="$1"
+    # -f est fichier de type ordinaire != foder/special file
+    if [[ -f "$to_read_file" ]]
+    then
+        send_message "$(cat "$to_read_file")"
+    else
+        send_message "[ERROR] : '$to_read_file' n'existe pas!"
+    fi
+}
+
+#fonction pour la commande whoami
+whoami(){
+    local username="$RECEIVER"
+    send_message "$username"
+}
+
+#fonction pour la commande au revoir
+goodbye(){
+    send_message "Au revoir !"
+    exit 0
+}
+
+unknown_command(){
+    send_message "🤖 ?"
+}
+
+check_listebot_file(){
+    local user_command="$1"
+    local bot_response=$(grep "^$user_command" liste-bot.txt)
+    if [[ -n "$bot_response" ]]
+    then
+        send_message "$(echo "$bot_response" | cut -d ' ' -f2-)"
+    else
+        unknown_command
+    fi
+
+}
+
+process_commands(){
+    while [[ true ]]; do
+        # lecture des message du receiver
+        msg=$(read_message)
+        # verifier si l'utilisateur a ecrit qqch
+        if [[ -z "$msg" ]]
+        then
+            continue # attendre qu'on entre une commande
+        fi
+
+        #Traitment des commands
+        #Verification si exisitent dans liste-bot.txt
+        #....
+        case "$msg" in 
+            "liste") 
+                 list_current_directory
             ;;
-        li*)
-            file=$(echo "${input#li}" | xargs) # xargs is for removing spaces (leading/trailing)
-            if [[ -f "$file" && -r "$file" ]]; then #exists? readable?
-                cat "$file"; echo # echo forces cat to end in a new line(if not, it's ugly)
-            else
-                echo "Sorry, this file doesn't exist or the file isn't readable" >&2
-                exit 2
-            fi
+            li\ *)
+                to_read_file="${msg#li }"
+                read_file
             ;;
-        "qui suis-je")
-            echo "$username"
+            "au revoir") 
+                goodbye
             ;;
+            "qui suis-je")
+            whoami
+            ;;
+            *)
+            #else checker les autre commands
+            check_listebot_file "$msg"
+        esac
         
-        "au revoir")
-            echo "Au revoir!"
-            exit 0
-            ;;
-        *)
-            if grep -w -q "$input" "$RESPONSE_FILE"; then #Reminder to implement check -r for response-file and if it exists ofc
-                # if that word is found in RESPONSE_FILE
-                grep "$input" "$RESPONSE_FILE" | while read -r line; do
-                    # Extract everything after the first space in the line
-                    # cuz reponse starts after 1st space
-                    answer="${line#* } "
-                    echo "$answer"
-                done
-            else
-                echo "🤖 ?"
-            fi
-            ;;
-    esac
+    done
+    
 }
 
 
-./chat $username $bot_name &
-./chat $bot_name $username --bot < pipe1 > pipe2 &
- 
-# Clean up pipes on script exit
-trap "rm pipe1 pipe2; kill $!" EXIT
 
-while true; do
-    read -p "$username: " usermessage
-    chat_bot "$usermessage"
-done
 
-rm pipe1 pipe2
+# MAIN --> RUN
+#initialisation du setup
+init_variables "$@"
+create_communication_pipes
+
+# Appel de 'process_commands' la 'main' focniton
+process_commands
+trap cleanup_pipes EXIT
