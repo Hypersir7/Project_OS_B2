@@ -1,0 +1,7 @@
+1. traiter les parametres du programme et les associer a des variables, psudo1/2 -> char[], [--bot] / [--manuel] -> bool (fait)
+2. fork() -> pere et fils 
+3. avoir une memoire paratge 
+4. creer et ouvrir les pipes si possible 
+5. gerer les signals
+7. pere gere l'ecriture en respectant les parametres du programme 
+8. fils gere la lecture en respectant les parametres du programme
