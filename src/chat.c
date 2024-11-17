@@ -10,7 +10,7 @@
 #include <sys/shm.h>
 #include <time.h>
 #include <signal.h>
-
+#include <stdbool.h>
 
 char user [30] ;
 char receiver [30] ;
