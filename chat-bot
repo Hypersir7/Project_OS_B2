@@ -12,17 +12,35 @@ create_communication_pipes(){
     SENDER_PIPE="/tmp/${ROBOT}-${RECEIVER}.chat"
     RECEIVER_PIPE="/tmp/${RECEIVER}-${ROBOT}.chat"
     # -p fichier de type pipe fifo
+
+    #nouvelle idee: si le fichier SENDER_PIPE ou RECEIVER_PIPE
+    # existe et qu'il n'est pas de type fifo ('-p')
+    # forcer sa supression du Filesystem et recreer!
+    # -e --> si fichier existe
+    # -p --> si fichier de type pipe FIFOs
+    # -f --> forcer la supression 
+    if [[ -e "$SENDER_PIPE" && ! -p "$SENDER_PIPE" ]]
+    then
+        rm -f "$SENDER_PIPE"
+    fi
+
+    if [[ -e "$RECEIVER_PIPE" && ! -p "$RECEIVER_PIPE" ]]
+    then
+        rm -f "$RECEIVER_PIPE"
+    fi
+    
+
     # creation du pipe d'envoie
     if [[ ! -p "$SENDER_PIPE" ]] 
     then
         mkfifo -m 0666 "$SENDER_PIPE"
-        #echo "[SUCESS] : created $SENDER_PIPE"
+        echo "[SUCESS] : created $SENDER_PIPE"
     fi
     # creation du pipe de reception
     if [[ ! -p "$RECEIVER_PIPE" ]] 
     then
         mkfifo -m 0666 "$RECEIVER_PIPE"
-        #echo "[SUCESS] : created $RECEIVER_PIPE"
+        echo "[SUCESS] : created $RECEIVER_PIPE"
     fi
     
 }
