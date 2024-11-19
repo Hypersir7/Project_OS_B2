@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cleanup_done=false
+
 init_variables(){
     #fonction intialisant les variables globaux   
     ROBOT_DEFAULT_NAME="bot"
@@ -46,21 +48,37 @@ create_communication_pipes(){
 }
 
 cleanup_pipes(){
-    rm -f "$RECEIVER_PIPE" "$SENDER_PIPE"
-    echo "[CLEANUP] : Deleted pipes $SENDER_PIPE and $RECEIVER_PIPE from Filesystem!"
+    if [[ "$cleanup_done" == false ]]
+    then
+        rm -f "$RECEIVER_PIPE" "$SENDER_PIPE"
+        echo "[CLEANUP] : Deleted pipes $SENDER_PIPE and $RECEIVER_PIPE from Filesystem!"
+        cleanup_done=true
+    fi
 }
 
 #fonction pour enovyer les messages au destinataire
 send_message(){
     local msg="$1" # le message est le 1er param..
-    echo "$msg" > "$SENDER_PIPE"
+    if [[ -p "$SENDER_PIPE" ]]
+    then
+        echo "$msg" > "$SENDER_PIPE"
+        return 1 # renovyer un code d'erreur si problem
+    else
+        echo "[ERROR] : Pipe '$SENDER_PIPE' n'existe pas! "
+    fi
 }
 
 #fonction pour lire les messages du destinataire
 read_message(){
     local msg
-    read -r msg < "$RECEIVER_PIPE"
-    echo "$msg"
+    if [[ -p "$RECEIVER_PIPE" ]]
+    then
+        read -r msg < "$RECEIVER_PIPE"
+        echo "$msg"
+    else
+        echo "[ERROR] : Pipe '$RECEIVER_PIPE' n'existe pas! "
+        exit 1 # quitter immediatment le program!
+    fi
 }
 
 #fonction executer la command 'liste'
@@ -89,7 +107,6 @@ whoami(){
 #fonction pour la commande au revoir
 goodbye(){
     send_message "Au revoir !"
-    exit 0
 }
 
 unknown_command(){
@@ -131,6 +148,8 @@ process_commands(){
             ;;
             "au revoir") 
                 goodbye
+                sleep 1
+                exit 0
             ;;
             "qui suis-je")
             whoami
@@ -150,8 +169,12 @@ process_commands(){
 # MAIN --> RUN
 #initialisation du setup
 init_variables "$@"
+
+
 create_communication_pipes
+
+trap 'cleanup_pipes; exit 0' EXIT SIGINT SIGTERM
 
 # Appel de 'process_commands' la 'main' focniton
 process_commands
-trap cleanup_pipes EXIT
+
