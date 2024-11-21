@@ -62,23 +62,28 @@ send_message(){
     if [[ -p "$SENDER_PIPE" ]]
     then
         echo "$msg" > "$SENDER_PIPE"
-        return 1 # renovyer un code d'erreur si problem
     else
         echo "[ERROR] : Pipe '$SENDER_PIPE' n'existe pas! "
+        return 1 # renovyer un code d'erreur si problem
     fi
 }
 
 #fonction pour lire les messages du destinataire
 read_message(){
-    local msg
-    if [[ -p "$RECEIVER_PIPE" ]]
-    then
-        read -r msg < "$RECEIVER_PIPE"
-        echo "$msg"
-    else
-        echo "[ERROR] : Pipe '$RECEIVER_PIPE' n'existe pas! "
-        exit 1 # quitter immediatment le program!
-    fi
+    while true
+    do
+        if [[ -p "$RECEIVER_PIPE" ]]
+        then
+            if read -r msg < "$RECEIVER_PIPE"
+            then
+                echo "$msg"
+                break # ici si un msg est lu avec sucess sortir de la boucle_. fin fonction
+            fi
+        else
+            echo "[ERROR] : Pipe '$RECEIVER_PIPE' n'existe pas!"
+            exit 1
+        fi
+    done
 }
 
 #fonction executer la command 'liste'
