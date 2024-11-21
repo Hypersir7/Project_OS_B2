@@ -149,7 +149,7 @@ process_commands(){
             ;;
             li\ *)
                 to_read_file="$(echo "${msg#li }" | xargs)"
-                read_file
+                read_file "$to_read_file"
             ;;
             "au revoir") 
                 goodbye
