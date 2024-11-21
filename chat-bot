@@ -148,7 +148,7 @@ process_commands(){
                  list_current_directory
             ;;
             li\ *)
-                to_read_file="${msg#li }"
+                to_read_file="$(echo "${msg#li }" | xargs)"
                 read_file
             ;;
             "au revoir") 
