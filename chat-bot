@@ -1,89 +1,41 @@
 #!/bin/bash
-
-cleanup_done=false
-
+set -x
 init_variables(){
     #fonction intialisant les variables globaux   
+    RESPONSE_FILE_NAME="liste-bot.txt"
     ROBOT_DEFAULT_NAME="bot"
-    RECEIVER="$1"
-    ROBOT="${2:-$ROBOT_DEFAULT_NAME}"
+    USERNAME="$1"
+    BOTNAME="${2:-$ROBOT_DEFAULT_NAME}"
 
 }
 
 create_communication_pipes(){
-    SENDER_PIPE="/tmp/${ROBOT}-${RECEIVER}.chat"
-    RECEIVER_PIPE="/tmp/${RECEIVER}-${ROBOT}.chat"
-    # -p fichier de type pipe fifo
-
-    #nouvelle idee: si le fichier SENDER_PIPE ou RECEIVER_PIPE
-    # existe et qu'il n'est pas de type fifo ('-p')
-    # forcer sa supression du Filesystem et recreer!
-    # -e --> si fichier existe
-    # -p --> si fichier de type pipe FIFOs
-    # -f --> forcer la supression 
-    if [[ -e "$SENDER_PIPE" && ! -p "$SENDER_PIPE" ]]
-    then
-        rm -f "$SENDER_PIPE"
-    fi
-
-    if [[ -e "$RECEIVER_PIPE" && ! -p "$RECEIVER_PIPE" ]]
-    then
-        rm -f "$RECEIVER_PIPE"
-    fi
     
-
-    # creation du pipe d'envoie
-    if [[ ! -p "$SENDER_PIPE" ]] 
-    then
-        mkfifo -m 0666 "$SENDER_PIPE"
-        echo "[SUCESS] : created $SENDER_PIPE"
-    fi
-    # creation du pipe de reception
-    if [[ ! -p "$RECEIVER_PIPE" ]] 
-    then
-        mkfifo -m 0666 "$RECEIVER_PIPE"
-        echo "[SUCESS] : created $RECEIVER_PIPE"
-    fi
-    
+    coproc CHAT_PROCESS { ./chat "$BOTNAME" "$USERNAME" [--bot]; }
 }
 
-cleanup_pipes(){
-    if [[ "$cleanup_done" == false ]]
-    then
-        rm -f "$RECEIVER_PIPE" "$SENDER_PIPE"
-        echo "[CLEANUP] : Deleted pipes $SENDER_PIPE and $RECEIVER_PIPE from Filesystem!"
-        cleanup_done=true
+trim_message(){
+    local msg=$1
+
+    # If the message starts with [$USERNAME], remove it and the following space
+    if [[ "$msg" =~ ^\[$USERNAME\]\  ]]; then
+        msg="${msg//\[$USERNAME\] /}"
     fi
+
+    echo "$msg"
 }
 
 #fonction pour enovyer les messages au destinataire
 send_message(){
-    local msg="$1" # le message est le 1er param..
-    if [[ -p "$SENDER_PIPE" ]]
-    then
-        echo "$msg" > "$SENDER_PIPE"
-    else
-        echo "[ERROR] : Pipe '$SENDER_PIPE' n'existe pas! "
-        return 1 # renovyer un code d'erreur si problem
-    fi
+    local msg="$1"
+    echo "$msg" >&"${CHAT_PROCESS[1]}";
 }
 
 #fonction pour lire les messages du destinataire
 read_message(){
-    while true
-    do
-        if [[ -p "$RECEIVER_PIPE" ]]
-        then
-            if read -r msg < "$RECEIVER_PIPE"
-            then
-                echo "$msg"
-                break # ici si un msg est lu avec sucess sortir de la boucle_. fin fonction
-            fi
-        else
-            echo "[ERROR] : Pipe '$RECEIVER_PIPE' n'existe pas!"
-            exit 1
-        fi
-    done
+    local msg
+    read -r msg <&"${CHAT_PROCESS[0]}"
+    echo "$msg"
 }
 
 #fonction executer la command 'liste'
@@ -105,81 +57,93 @@ read_file(){
 
 #fonction pour la commande whoami
 whoami(){
-    local username="$RECEIVER"
+    local username="$USERNAME"
     send_message "$username"
 }
 
 #fonction pour la commande au revoir
 goodbye(){
     send_message "Au revoir !"
+    exit 0
 }
 
 unknown_command(){
     send_message "🤖 ?"
 }
 
-check_listebot_file(){
+check_listebot_file() {
     local user_command="$1"
-    local bot_response=$(grep "^$user_command" liste-bot.txt)
-    if [[ -n "$bot_response" ]]
-    then
-        send_message "$(echo "$bot_response" | cut -d ' ' -f2-)"
+
+    # Check if the user command is empty
+    if [[ -z "$user_command" ]]; then
+        echo "[ERROR]: Empty command received!" >&2
+        return
+    fi
+
+
+    local line
+    line=$(grep "^$user_command" "$RESPONSE_FILE_NAME")
+
+    if [[ ! -f "$RESPONSE_FILE_NAME" ]]; then
+        send_message "[ERROR]: Response file not found!"
+        return
+    fi
+
+    echo "DEBUG bot_response is : $line" >&2
+
+    if [[ -n "$line" ]]; then
+        local answer="${line#* }"
+        send_message "$answer"
     else
         unknown_command
     fi
-
+    # if grep -q "$user_command" "$RESPONSE_FILE_NAME"; then #Reminder to implement check -r for response-file and if it exists ofc
+    #     # if that word is found in RESPONSE_FILE
+    #     grep "$user_command" "$RESPONSE_FILE_NAME" | while IFS= read -r line; do
+    #         # Extract everything after the first space in the line
+    #         # cuz reponse starts after 1st space
+    #         local answer="${line#* } "
+    #         send "$answer"
+    #         break
+    #     done
+    # else
+    #     unknown_command
+    # fi
 }
 
-process_commands(){
-    while [[ true ]]; do
-        # lecture des message du receiver
-        msg=$(read_message)
-        # verifier si l'utilisateur a ecrit qqch
-        if [[ -z "$msg" ]]
-        then
-            continue # attendre qu'on entre une commande
-        fi
 
-        #Traitment des commands
-        #Verification si exisitent dans liste-bot.txt
-        #....
+
+process_commands(){
+    local msg=""
+    while true; do
+        msg=$(read_message)
+
+        msg=$(trim_message "$msg")
+
         case "$msg" in 
             "liste") 
                  list_current_directory
-            ;;
+                ;;
             li\ *)
+                local to_read_file
                 to_read_file="$(echo "${msg#li }" | xargs)"
                 read_file "$to_read_file"
-            ;;
+                ;;
             "au revoir") 
                 goodbye
-                sleep 1
-                exit 0
-            ;;
+                ;;
             "qui suis-je")
-            whoami
-            ;;
+                whoami
+                ;;
             *)
-            #else checker les autre commands
-            check_listebot_file "$msg"
+                check_listebot_file "$msg"
+                ;;
         esac
-        
     done
     
 }
 
-
-
-
 # MAIN --> RUN
-#initialisation du setup
 init_variables "$@"
-
-
 create_communication_pipes
-
-trap 'cleanup_pipes; exit 0' EXIT SIGINT SIGTERM
-
-# Appel de 'process_commands' la 'main' focniton
 process_commands
-
