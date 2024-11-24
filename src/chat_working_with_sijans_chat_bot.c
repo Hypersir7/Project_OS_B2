@@ -285,7 +285,6 @@ void check_pseudo(char pseudo[]){
 		for (int i = 0; i < pseudo_len; i ++){
 			if (pseudo[i] == '[' || pseudo[i] == ']' || pseudo[i] == '-' || pseudo[i] == '/'){
 				printf("The pseudo shouldn't include /, -, [, or ]\n");
-				fflush(stdout);
 				exit(3);
 			}
 			
@@ -293,7 +292,6 @@ void check_pseudo(char pseudo[]){
 		
 	}else {
 		printf("The pseudo is over 30 charachters\n");
-		fflush(stdout);
 		exit(2);
 	}
 	
@@ -321,9 +319,9 @@ void check_parameters(char param[]){
 	Cette fonction verifie que les modes sont bien ecrits et ensuite met a jour les variables globales bool 
 	sinon on termine le programme avec une erreur
 	*/
-	if (char_array_identical(param, "[--bot]")){
+	if (char_array_identical(param, "--bot")){
 		is_bot = true ;
-	}else if (char_array_identical(param, "[--manuel]")){
+	}else if (char_array_identical(param, "--manuel")){
 		is_manuel = true;
 	}else {
 		printf("Wrong parameters ! Use [--bot] or/and [--manuel]\n");
@@ -358,8 +356,7 @@ void init_check_prog_param(int argc, char* argv[]){
 				
 		}else {
 		// une erreur 1	
-			printf("chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]");
-			fflush(stdout);
+			perror("chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]");
 			exit(1);
 		}
 		
