@@ -1,4 +1,5 @@
 #!/bin/bash
+set -x
 
 if [[ $# -gt 2 ]]; then #Verifies the number of arguments given, if more than 2, send out an error to sterr
     echo "<< chat-bot destinataire [pseudo] >>" >&2
@@ -16,7 +17,7 @@ init_variables(){
 
 create_communication_pipes(){
     
-    coproc CHAT_PROCESS { ./chat "$BOTNAME" "$USERNAME" [--bot]; }
+    coproc CHAT_PROCESS { ./chat "$BOTNAME" "$USERNAME" --bot; }
 }
 
 trim_message(){
@@ -45,18 +46,22 @@ read_message(){
 
 #fonction executer la command 'liste'
 list_current_directory(){
-    send_message "$(ls)"
+    while IFS= read -r line; do
+        send_message "$line"
+    done < <(ls)
 }
 
 #fonnction pour lire un fichier --> commande 'li'
 read_file(){
     local to_read_file="$1"
     # -f est fichier de type ordinaire != foder/special file
-    if [[ -f "$to_read_file" ]]
-    then
-        send_message "$(cat "$to_read_file")"
+    if [[ -f "$to_read_file" ]]; then
+        while IFS= read -r line; do
+            send_message "$line"
+        done < <(cat "$to_read_file")
     else
-        send_message "[ERROR] : '$to_read_file' n'existe pas!"
+        "[ERROR] : '$to_read_file' n'existe pas!" >&2
+        unknown_command
     fi
 }
 
@@ -87,7 +92,7 @@ check_listebot_file() {
 
 
     local line
-    line=$(grep "^$user_command" "$RESPONSE_FILE_NAME")
+    line=$(grep -w "^$user_command" "$RESPONSE_FILE_NAME")
 
     if [[ ! -f "$RESPONSE_FILE_NAME" ]]; then
         send_message "[ERROR]: Response file not found!"
@@ -102,18 +107,6 @@ check_listebot_file() {
     else
         unknown_command
     fi
-    # if grep -q "$user_command" "$RESPONSE_FILE_NAME"; then #Reminder to implement check -r for response-file and if it exists ofc
-    #     # if that word is found in RESPONSE_FILE
-    #     grep "$user_command" "$RESPONSE_FILE_NAME" | while IFS= read -r line; do
-    #         # Extract everything after the first space in the line
-    #         # cuz reponse starts after 1st space
-    #         local answer="${line#* } "
-    #         send "$answer"
-    #         break
-    #     done
-    # else
-    #     unknown_command
-    # fi
 }
 
 
