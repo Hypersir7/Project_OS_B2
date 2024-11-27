@@ -14,6 +14,7 @@
 #include <poll.h>
 #include <sys/wait.h>
 
+
 // on définit les variables et fonctions necessaires :
   
 char user [30] ; // pour stocker le nom de l'utilisateur 
@@ -49,6 +50,7 @@ void sig_send_process_handler (int sig); // s'occupe des signials du processus p
 void sig_receive_process_handler (int sig); // s'occupe des signials du processus fils 
 void print_messages_from_sm(char (*msgs)[100], int* msg_counter); // imprime les message de sm : shared memory
 void send_message(int fd, char msg[100]);
+void receive_message(char msg[100]);
 
 
 int main(int argc, char* argv[]) {
@@ -66,36 +68,24 @@ int main(int argc, char* argv[]) {
 	// on cree un segement de donnees communnes
 	// la cle doit etre generer de facon aleatoir sinon tous les programmes chat auront le meme espace commun
 	srand(time(0));
-	int key = generate_random_num(1, 1000); 
-	int key2 = generate_random_num(1, 1000); 
+	int key = generate_random_num(1, 1000000); 
+	int key2 = generate_random_num(1, 1000000);
+	// la chance que les cles coincident sont tres petites et si ca arrive, l'utilisateur doit juste essayer a nouveau.
+	
 	size_t commun_space_size = 41 * 100; // 41 est le nombre de messages et 100 est la taille d'un message
 	// si on a 41 message ca veut dire qu'il y a plus de 4096 octects a afficher 
 	
 	char_shared_memory_segment_status = shmget(key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
 	int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
-	// error handling et verifier que les cles ne coincident pas 
+	// error handling
 	// pour le char array
 	if (char_shared_memory_segment_status == -1){
-		if (errno != EEXIST){
-			perror("Failed to create commun memory"); exit(1);}
-		else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
-			int new_key = key;
-			while(new_key == key){
-				new_key = generate_random_num(1, 1000);
-				char_shared_memory_segment_status = shmget(new_key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
-			}
-		}}
+		perror("Failed to create commun memory"); 
+		exit(1);
+	}
 	// pour le int message_counter
 	if (int_counter_smss == -1){
-		if (errno != EEXIST){
-			perror("Failed to create commun memory"); exit(1);}
-		else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
-			int new_key = key2;
-			while(new_key == key2){
-				new_key = generate_random_num(1, 1000);
-				int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
-			}
-		}
+		perror("Failed to create commun memory"); exit(1);
 	}
 	// on attache 
 	messages = shmat(char_shared_memory_segment_status, NULL, 0);
@@ -191,6 +181,15 @@ int main(int argc, char* argv[]) {
 			
 		}//end while
 		close(fd_writer);
+		// on detache
+		if (shmdt(messages) == -1) {
+            perror("Failed to detach memory segement : ");
+            exit(1);
+        }
+		if (shmdt(message_counter) == -1) {
+            perror("Failed to detach memory segement : ");
+            exit(1);
+        }
 		
 		// on suprime le pipe 
 		unlink(send_path);
@@ -237,6 +236,11 @@ int main(int argc, char* argv[]) {
 			
 		is_reader_opened = true;
 		
+		struct pollfd pfd;
+		pfd.fd = fd_reader;  // File descriptor for the named pipe
+		pfd.events = POLLIN;
+		
+		
 		// si le pere se termine le fils va se terminer aussi
 		while(parent_pid == getppid()){
 			
@@ -246,34 +250,27 @@ int main(int argc, char* argv[]) {
 				exit(0);
 			}
 			
+			int poll_result = poll(&pfd, 1, -1); // attendre tout le temps (-1 timeout)
+
+			if (poll_result > 0) {
+				if (pfd.revents & POLLIN) { // on a des donnees a lire !
+					ssize_t bytes_read = read(fd_reader, message, message_size_to_read);
+					if (bytes_read == -1) {
+						perror("Failed to read message");
+					} else {
+						// Successfully read data, process it
+						receive_message(message);
+					}
+				}
+			} else if (poll_result == 0) {
+				// ca risque pas de nous arriver psk on -1 en timeout 
+				fprintf(stderr, "Poll timeout (unexpected)\n");
+			} else {
+				perror("Poll error");
+				break;
+			}
 			
-			if ((read(fd_reader, message, message_size_to_read))== -1){
-				fprintf(stderr, "Failed to read message");
-			}
-			// on regarde si le pere est toujours la 
-			if (parent_pid == getppid()){
-				if (!is_manuel){
-				if (is_bot){// on gere le mode --bot
-					printf("[%s] %s \n", receiver, message);
-					fflush(stdout);
-				}else{
-					printf("[\x1B[4m%s\x1B[0m] %s \n", receiver, message);
-					fflush(stdout);
-				}
-				}else{
-					// on ecrit dans la memeoire partage
-					printf("\a");
-					fflush(stdout);
-					(*message_counter) ++ ;
-					strcpy(messages[(*message_counter) - 1], message);
-				}
-			}
-			// si on depasse les 4096 octects dans le segement de memoire partage
-			if ((*message_counter) >= 41){
-				print_messages_from_sm(messages, message_counter);
-			}
-			fflush(stdout);
-		}
+		}// end while
 		close(fd_reader);
 		
 	}
@@ -418,6 +415,17 @@ void end_send_process(int ss_status, int ss_status2){
 	*/
 	close(fd_writer);
 	unlink(send_path);
+	
+	// on detache
+	if (shmdt(messages) == -1) {
+		perror("Failed to detach memory segement : ");
+		exit(1);
+	}
+	if (shmdt(message_counter) == -1) {
+		perror("Failed to detach memory segement : ");
+		exit(1);
+	}
+	// on efface les segments de memoire
 	if (shmctl(ss_status, IPC_RMID, NULL) < 0) {
         fprintf(stderr, "shmctl failed");
         exit(1);
@@ -451,6 +459,17 @@ void sig_send_process_handler (int sig){
 			}
 		}else{
 			unlink(send_path);
+			
+			// on detache
+			if (shmdt(messages) == -1) {
+				perror("Failed to detach memory segement : ");
+				exit(1);
+			}
+			if (shmdt(message_counter) == -1) {
+				perror("Failed to detach memory segement : ");
+				exit(1);
+			}
+			// on efface les segement de memoire
 			if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
 				exit(1);
@@ -530,6 +549,17 @@ void send_message(int fd, char message[100]){
 				close(fd_writer);
 				// on suprime le pipe 
 				unlink(send_path);
+				
+				// on detache
+				if (shmdt(messages) == -1) {
+					perror("Failed to detach memory segement : ");
+					exit(1);
+				}
+				if (shmdt(message_counter) == -1) {
+					perror("Failed to detach memory segement : ");
+					exit(1);
+				}
+				
 				// on suprime les segements de memeoire partage
 				if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
@@ -556,4 +586,30 @@ void send_message(int fd, char message[100]){
 			}
 			
 			fflush(stdout);
+}
+
+void receive_message(char msg[100]){
+	/*
+	Cette fonction va traiter l'affichage des messages recus 
+	*/
+	if (!is_manuel){
+		if (is_bot){// on gere le mode --bot
+			printf("[%s] %s \n", receiver, msg);
+			fflush(stdout);
+		}else{
+			printf("[\x1B[4m%s\x1B[0m] %s \n", receiver, msg);
+			fflush(stdout);
+		}
+	}else{
+			// on ecrit dans la memeoire partage
+			printf("\a");
+			fflush(stdout);
+			(*message_counter) ++ ;
+			strcpy(messages[(*message_counter) - 1], msg);
+		}
+	// si on depasse les 4096 octects dans le segement de memoire partage
+	if ((*message_counter) >= 41){
+		print_messages_from_sm(messages, message_counter);
+	}
+	fflush(stdout);
 }
