@@ -266,8 +266,10 @@ int main(int argc, char* argv[]) {
 				// ca risque pas de nous arriver psk on -1 en timeout 
 				fprintf(stderr, "Poll timeout (unexpected)\n");
 			} else {
-				perror("Poll error");
+				if (errno != EINTR){
+				perror("Poll Failed : ");
 				break;
+			}else{continue;} 
 			}
 			
 		}// end while
