@@ -12,6 +12,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <poll.h>
+#include <sys/wait.h>
 
 // on définit les variables et fonctions necessaires :
   
@@ -60,52 +61,80 @@ int main(int argc, char* argv[]) {
 	int mkdir_feedback = mkdir("tmp", 0777);
 	if ( mkdir_feedback == -1 && errno != EEXIST) {
     fprintf(stderr, "Directory creation failed");
+	fflush(stdout);
 	}
 	
-	// on cree un segement de donnees communnes
-	// la cle doit etre generer de facon aleatoir sinon tous les programmes chat auront le meme espace commun
+	// on cree un segment de donnees communes
+	// la cle doit etre generer de facon aleatoire sinon tous les programmes chat auront le meme espace commun
 	srand(time(0));
-	int key = generate_random_num(1, 1000); 
-	int key2 = generate_random_num(1, 1000); 
 	size_t commun_space_size = 41 * 100; // 41 est le nombre de messages et 100 est la taille d'un message
-	// si on a 41 message ca veut dire qu'il y a plus de 4096 octects a afficher 
-	
-	char_shared_memory_segment_status = shmget(key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
-	int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
-	// error handling et verifier que les cles ne coincident pas 
-	// pour le char array
-	if (char_shared_memory_segment_status == -1){
-		if (errno != EEXIST){
-			fprintf(stderr, "Failed to create commun memory"); exit(1);}
-		else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
-			int new_key = key;
-			while(new_key == key){
-				new_key = generate_random_num(1, 1000);
-				char_shared_memory_segment_status = shmget(new_key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
-			}
-		}}
-	// pour le int message_counter
-	if (int_counter_smss == -1){
-		if (errno != EEXIST){
-			fprintf(stderr, "Failed to create commun memory"); exit(1);}
-		else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
-			int new_key = key2;
-			while(new_key == key2){
-				new_key = generate_random_num(1, 1000);
-				int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
-			}
-		}}
+	// si on a 41 message ca veut dire qu'il y a plus de 4096 octects a afficher
+
+	int key, key2;
+
+	do {
+		key = generate_random_num(1, 1000);
+		char_shared_memory_segment_status = shmget(key, commun_space_size, IPC_CREAT | IPC_EXCL | 0600);
+	} while (char_shared_memory_segment_status == -1 && errno == EEXIST);
+
+	do {
+		key2 = generate_random_num(1, 1000);
+		int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT | IPC_EXCL | 0600);
+	} while (int_counter_smss == -1 && errno == EEXIST);
+
+
+	// char_shared_memory_segment_status = shmget(key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
+	// int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
+
+	// // error handling et verifier que les cles ne coincident pas 
+	// // pour le char array
+	// if (char_shared_memory_segment_status == -1){
+	// 	if (errno != EEXIST){
+	// 		fprintf(stderr, "Failed to create commun memory"); exit(1);}
+	// 	else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
+	// 		int new_key = key;
+	// 		while(new_key == key){
+	// 			new_key = generate_random_num(1, 1000);
+	// 			char_shared_memory_segment_status = shmget(new_key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
+	// 		}
+	// 	}}
+	// // pour le int message_counter
+	// if (int_counter_smss == -1){
+	// 	if (errno != EEXIST){
+	// 		fprintf(stderr, "Failed to create commun memory"); exit(1);}
+	// 	else{// si on a par hasard la meme cle on va s'assurer qu'on a une differente cle !
+	// 		int new_key = key2;
+	// 		while(new_key == key2){
+	// 			new_key = generate_random_num(1, 1000);
+	// 			int_counter_smss = shmget(key2, sizeof(int), IPC_CREAT|IPC_EXCL|0600);
+	// 		}
+	// 	}
 	// on attache 
 	messages = shmat(char_shared_memory_segment_status, NULL, 0);
 	message_counter = shmat(int_counter_smss, NULL, 0);
-	if (messages == (void *) -1) {fprintf(stderr, "Failed to attach the shared memory segment"); exit(1);}
-	if (message_counter == (void *) -1) {fprintf(stderr, "Failed to attach the shared memory segment"); exit(1);}
+	// if (messages == (void *) -1) {fprintf(stderr, "Failed to attach the shared memory segment"); exit(1);}
+	// if (message_counter == (void *) -1) {fprintf(stderr, "Failed to attach the shared memory segment"); exit(1);}
 	
+	if (messages == (void *)-1 || message_counter == (void *)-1) {
+
+		if (messages != (void *)-1) shmdt(messages);
+		if (message_counter != (void *)-1) shmdt(message_counter);
+
+		shmctl(char_shared_memory_segment_status, IPC_RMID, NULL);
+		shmctl(int_counter_smss, IPC_RMID, NULL);
+		
+		fprintf(stderr, "Failed to attach the shared memory segment");
+		fflush(stdout);
+		exit(1);
+	}
+
+
 	
 	// on va fork 
 	pid_t p_id = fork();
 	if (p_id < 0){
 		fprintf(stderr, "Le fork n'a pas réussi !");
+		fflush(stdout);
 		exit(1);
 	}else if(p_id > 0){
 		// on cree le pipe 
@@ -123,6 +152,7 @@ int main(int argc, char* argv[]) {
 			fd_writer = open(send_path, O_WRONLY);
 			if (fd_writer == -1) {
 			fprintf(stderr, "Failed to open the pipe");
+			fflush(stdout);
 			close(fd_writer);
 			exit(1);
 			}
@@ -146,6 +176,7 @@ int main(int argc, char* argv[]) {
             } else if (child_result != 0){
                 // An error occurred
                 fprintf(stderr, "waitpid failed");
+				fflush(stdout);
                 break;
             }
 			
@@ -156,6 +187,7 @@ int main(int argc, char* argv[]) {
 			// on ignore les SIGINT
 			if (errno != EINTR){
 				fprintf(stderr, "poll failed");
+				fflush(stdout);
 				break;
 			}else{continue;} 
         }
@@ -183,6 +215,7 @@ int main(int argc, char* argv[]) {
 				break;
 			} else if (ferror(stdin)) {
 				fprintf(stderr, "stdin failed");
+				fflush(stdout);
 			}
 		}
 			
@@ -192,13 +225,15 @@ int main(int argc, char* argv[]) {
 		
 		// on suprime le pipe 
 		unlink(send_path);
-		// on suprime les segements de memeoire partage
+		// on suprime les segments de memeoire partage
 		if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
         fprintf(stderr, "shmctl failed");
+		fflush(stdout);
         exit(1);
 		}
 		if (shmctl(int_counter_smss, IPC_RMID, NULL) < 0) {
         fprintf(stderr, "shmctl failed");
+		fflush(stdout);
         exit(1);
 		}
 		
@@ -229,6 +264,7 @@ int main(int argc, char* argv[]) {
 			fd_reader = open(receive_path, O_RDONLY);
 			if (fd_reader == -1) {
 			fprintf(stderr, "Failed to open the pipe");
+			fflush(stdout);
 			close(fd_reader);
 			exit(0);
 			}
@@ -247,28 +283,30 @@ int main(int argc, char* argv[]) {
 			
 			if ((read(fd_reader, message, message_size_to_read))== -1){
 				fprintf(stderr, "Failed to read message");
+				fflush(stdout);
 			}
 			// on regarde si le pere est toujours la 
 			if (parent_pid == getppid()){
 				if (!is_manuel){
-				if (is_bot){// on gere le mode --bot
-					printf("[%s] %s \n", receiver, message);
-				}else{
-					printf("[\x1B[4m%s\x1B[0m] %s \n", receiver, message);
-				}
-				}else{
-					// on ecrit dans la memeoire partage
+					if (is_bot) { // on gere le mode --bot
+						printf("[%s] %s \n", receiver, message);
+						fflush(stdout);
+					} else {
+						printf("[\x1B[4m%s\x1B[0m] %s \n", receiver, message);
+						fflush(stdout);
+					}
+				} else {
+					// on ecrit dans la memoire partage
 					printf("\a");
-					fflush(stdout);
 					(*message_counter) ++ ;
 					strcpy(messages[(*message_counter) - 1], message);
 				}
 			}
-			// si on depasse les 4096 octects dans le segement de memoire partage
+			// si on depasse les 4096 octects dans le segment de memoire partage
 			if ((*message_counter) >= 41){
 				print_messages_from_sm(messages, message_counter);
+				fflush(stdout);
 			}
-			fflush(stdout);
 		}
 		close(fd_reader);
 		
@@ -299,6 +337,7 @@ void check_pseudo(char pseudo[]){
 		for (int i = 0; i < pseudo_len; i ++){
 			if (pseudo[i] == '[' || pseudo[i] == ']' || pseudo[i] == '-' || pseudo[i] == '/'){
 				printf("The pseudo shouldn't include /, -, [, or ]\n");
+				fflush(stdout);
 				exit(3);
 			}
 			
@@ -306,6 +345,7 @@ void check_pseudo(char pseudo[]){
 		
 	}else {
 		printf("The pseudo is over 30 charachters\n");
+		fflush(stdout);
 		exit(2);
 	}
 	
@@ -339,6 +379,7 @@ void check_parameters(char param[]){
 		is_manuel = true;
 	}else {
 		printf("Wrong parameters ! Use [--bot] or/and [--manuel]\n");
+		fflush(stdout);
 		exit(1);
 	}
 	
@@ -370,12 +411,14 @@ void init_check_prog_param(int argc, char* argv[]){
 		}else {
 		// une erreur 1	
 			fprintf(stderr, "chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]");
+			fflush(stdout);
 			exit(1);
 		}
 		
 	}else{
 		// une erreur 1
 		fprintf(stderr,"chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]");
+		fflush(stdout);
 		exit(1);
 	}
 }
@@ -416,10 +459,12 @@ void end_send_process(int ss_status, int ss_status2){
 	unlink(send_path);
 	if (shmctl(ss_status, IPC_RMID, NULL) < 0) {
         fprintf(stderr, "shmctl failed");
+		fflush(stdout);
         exit(1);
 	}
 	if (shmctl(ss_status2, IPC_RMID, NULL) < 0) {
         fprintf(stderr, "shmctl failed");
+		fflush(stdout);
         exit(1);
 	}
 	exit(0);
@@ -441,7 +486,9 @@ void sig_send_process_handler (int sig){
 				// on veut enlever le ^C qui apparait apres avoir appuie control c 
 				
 				printf("\033[1D");   // Déplacer le curseur d'une position vers la gauche
+				fflush(stdout);
 				printf("\033[1D");   // Déplacer le curseur d'une position vers la gauche
+				fflush(stdout);
 				
 				print_messages_from_sm(messages, message_counter);
 			}
@@ -449,10 +496,12 @@ void sig_send_process_handler (int sig){
 			unlink(send_path);
 			if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
+				fflush(stdout);
 				exit(1);
 			}
 			if (shmctl(int_counter_smss, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
+				fflush(stdout);
 				exit(1);
 			}
 			exit(4);
@@ -492,8 +541,11 @@ void print_messages_from_sm(char (*msgs)[100], int* msg_counter){
 	for (int i = 0; i < (*msg_counter); i++) {
 		if (is_bot){// on gere le mode --bot
 			printf("[%s] %s \n", receiver, msgs[i]);
+			fflush(stdout);
 		}else{
 			printf("[\x1B[4m%s\x1B[0m] %s \n", receiver, msgs[i]);
+			fflush(stdout);
+			
 		}
     }
 	(*msg_counter) = 0;
@@ -527,10 +579,12 @@ void send_message(int fd, char message[100]){
 				// on suprime les segements de memeoire partage
 				if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
+				fflush(stdout);
 				exit(1);
 				}
 				if (shmctl(int_counter_smss, IPC_RMID, NULL) < 0) {
 				fprintf(stderr, "shmctl failed");
+				fflush(stdout);
 				exit(1);
 				}
 				exit(1);
@@ -538,10 +592,13 @@ void send_message(int fd, char message[100]){
 			
 			if (!is_bot){
 			printf("[\x1B[4m%s\x1B[0m] %s \n",user, message);
+			fflush(stdout);
+
 			}
 			
 			if ((write(fd, message, message_size_to_write)) == -1){
 				fprintf(stderr, "Failed to send message");
+				fflush(stdout);
 			}
 			
 			//si on a ecrit alors il faut afficher les messages dans le segement de memoire partage, si le mode manuel est active
@@ -549,5 +606,4 @@ void send_message(int fd, char message[100]){
 				print_messages_from_sm(messages, message_counter);
 			}
 			
-			fflush(stdout);
 }
