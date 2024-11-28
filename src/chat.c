@@ -43,6 +43,8 @@ int * message_counter = 0;
 bool is_writer_opened = false; // pour verifier si les pipes sont ouverts 
 bool is_reader_opened = false;
 
+pid_t p_id; // le p_id est globale pour qu'on puisse avoir acces depuis les fonctions de terminaison.
+
 int char_array_len(char char_array[]); // compte la longueur d'une chaine de charachteres
 bool char_array_identical(char arr1[], char arr2[]); // compare 2 chaines de charachteres
 void check_pseudo(char pseudo[]); // verifie les pseudos 
@@ -100,7 +102,7 @@ int main(int argc, char* argv[]) {
 	
 	
 	// on va fork 
-	pid_t p_id = fork();
+	p_id = fork();
 	if (p_id < 0){
 		fprintf(stderr, "Le fork n'a pas réussi !");
 		exit(1);
@@ -183,8 +185,10 @@ int main(int argc, char* argv[]) {
 			}
 		}
 			
-			
 		}//end while
+		
+		kill(p_id, SIGTERM);
+		
 		close(fd_writer);
 		// on detache
 		if (shmdt(messages) == -1) {
@@ -247,7 +251,7 @@ int main(int argc, char* argv[]) {
 		
 		
 		// si le pere se termine le fils va se terminer aussi
-		while(parent_pid == getppid()){
+		while(true){
 			
 			if (access(receive_path, F_OK) != 0) {
 				// on va verifier si le pipe est toujours la 
@@ -255,9 +259,14 @@ int main(int argc, char* argv[]) {
 				exit(0);
 			}
 			
-			int poll_result = poll(&pfd, 1, -1); // attendre tout le temps (-1 timeout)
+			int poll_result = poll(&pfd, 1, POLL_TIMEOUT); // attendre tout le temps (-1 timeout)
 
 			if (poll_result > 0) {
+				if (pfd.revents & POLLHUP) {
+					// disconnection 
+				break;
+				}
+				
 				if (pfd.revents & POLLIN) { // on a des donnees a lire !
 					ssize_t bytes_read; 
 					do {
@@ -273,7 +282,7 @@ int main(int argc, char* argv[]) {
 				}
 			} else if (poll_result == 0) {
 				// ca risque pas de nous arriver psk on -1 en timeout 
-				fprintf(stderr, "Poll timeout (unexpected)\n");
+				continue;
 			} else {
 				if (errno != EINTR){
 				perror("Poll Failed : ");
@@ -424,6 +433,9 @@ void end_send_process(int ss_status, int ss_status2){
 	/*
 	Cette fonction finit le processus pere ("writer")
 	*/
+	
+	kill(p_id, SIGTERM);
+	
 	close(fd_writer);
 	unlink(send_path);
 	
@@ -469,6 +481,8 @@ void sig_send_process_handler (int sig){
 				print_messages_from_sm(messages, message_counter);
 			}
 		}else{
+			kill(p_id, SIGTERM);
+			
 			unlink(send_path);
 			
 			// on detache
@@ -545,42 +559,6 @@ void send_message(int fd, char message[100]){
 			size_t message_size_to_write = (size_t)(message_len + 1);
 			if (message_len > 0 && message[message_len - 1] == '\n'){
 				message[message_len - 1] = '\0';
-			}
-			
-			// ceci est une cle qui peut etre recu par chat-bot lorsque la commande "au revoir" est envoye
-			// nous avons fait ce traitement particulier apres avoir observer un comportement non attendue lors que 
-			// nous fermons chat depuis chat-bot avec kill -SIGTERM "$chat_pid". Le programme se fermait mais le chat de 
-			// l'utilisateur ne detectait pas la deconnexion et donc apres de longue heure de debuggage, nous contournos le 
-			// problem en utilisant une cle qui vaut en decimal : 26112024
-			// la probabilite que l'utilisateur l'ecrive au hazard est tres petite donc ca ne risque pas de creer des 
-			// comportements inattendus.
-			if (char_array_identical(message, "1100011100111000000011000")){
-				
-				// on termine le processus
-				close(fd_writer);
-				// on suprime le pipe 
-				unlink(send_path);
-				
-				// on detache
-				if (shmdt(messages) == -1) {
-					perror("Failed to detach memory segement : ");
-					exit(1);
-				}
-				if (shmdt(message_counter) == -1) {
-					perror("Failed to detach memory segement : ");
-					exit(1);
-				}
-				
-				// on suprime les segements de memeoire partage
-				if (shmctl(char_shared_memory_segment_status, IPC_RMID, NULL) < 0) {
-				fprintf(stderr, "shmctl failed");
-				exit(1);
-				}
-				if (shmctl(int_counter_smss, IPC_RMID, NULL) < 0) {
-				fprintf(stderr, "shmctl failed");
-				exit(1);
-				}
-				exit(1);
 			}
 			
 			if (!is_bot){
