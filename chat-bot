@@ -8,7 +8,7 @@ fi
 
 chat="./chat"
 user=$1
-me="bot"
+me=${2:-bot}
 
 # on demmarre chat et on rederige ses stdin et stdout vers les tuyaux qu'on a cree
 coproc CHAT { "$chat" "$me" "$user" "--bot"; } 
