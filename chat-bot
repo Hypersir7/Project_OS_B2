@@ -1,185 +1,150 @@
 #!/bin/bash
 
-cleanup_done=false
+# on controle qu'il y a le psudo 
+if [ -z "$1" ] || [ "$1" == "bot" ]; then
+    echo "Error: Wrong format, Pseudo is missing !."
+    exit 1
+fi
 
-init_variables(){
-    #fonction intialisant les variables globaux   
-    ROBOT_DEFAULT_NAME="bot"
-    RECEIVER="$1"
-    ROBOT="${2:-$ROBOT_DEFAULT_NAME}"
+chat="./chat"
+user=$1
+me="bot"
+
+# on demmarre chat et on rederige ses stdin et stdout vers les tuyaux qu'on a cree
+coproc CHAT { "$chat" "$me" "$user" "--bot"; } 
+
+# files discriptors
+COPROC_READ=${CHAT[0]}
+COPROC_WRITE=${CHAT[1]}
+
+# Set non-blocking mode for reading
+exec {COPROC_READ}<&${COPROC_READ}
+exec {COPROC_WRITE}>&${COPROC_WRITE}
+
+coproc_pid=${CHAT_PID}
+chat_pid=$(ps --ppid "$coproc_pid" -o pid= | awk '{print $1}')
+
+
+write_to_chat_stdin() {
+    # une fonction qui ecrit dans le stdin de chat
+    local message="$1"
+    echo "$message" >&${COPROC_WRITE}
 
 }
 
-create_communication_pipes(){
-    SENDER_PIPE="/tmp/${ROBOT}-${RECEIVER}.chat"
-    RECEIVER_PIPE="/tmp/${RECEIVER}-${ROBOT}.chat"
-    # -p fichier de type pipe fifo
-
-    #nouvelle idee: si le fichier SENDER_PIPE ou RECEIVER_PIPE
-    # existe et qu'il n'est pas de type fifo ('-p')
-    # forcer sa supression du Filesystem et recreer!
-    # -e --> si fichier existe
-    # -p --> si fichier de type pipe FIFOs
-    # -f --> forcer la supression 
-    if [[ -e "$SENDER_PIPE" && ! -p "$SENDER_PIPE" ]]
-    then
-        rm -f "$SENDER_PIPE"
-    fi
-
-    if [[ -e "$RECEIVER_PIPE" && ! -p "$RECEIVER_PIPE" ]]
-    then
-        rm -f "$RECEIVER_PIPE"
-    fi
-    
-
-    # creation du pipe d'envoie
-    if [[ ! -p "$SENDER_PIPE" ]] 
-    then
-        mkfifo -m 0666 "$SENDER_PIPE"
-        echo "[SUCESS] : created $SENDER_PIPE"
-    fi
-    # creation du pipe de reception
-    if [[ ! -p "$RECEIVER_PIPE" ]] 
-    then
-        mkfifo -m 0666 "$RECEIVER_PIPE"
-        echo "[SUCESS] : created $RECEIVER_PIPE"
-    fi
-    
-}
-
-cleanup_pipes(){
-    if [[ "$cleanup_done" == false ]]
-    then
-        rm -f "$RECEIVER_PIPE" "$SENDER_PIPE"
-        echo "[CLEANUP] : Deleted pipes $SENDER_PIPE and $RECEIVER_PIPE from Filesystem!"
-        cleanup_done=true
-    fi
-}
-
-#fonction pour enovyer les messages au destinataire
-send_message(){
-    local msg="$1" # le message est le 1er param..
-    if [[ -p "$SENDER_PIPE" ]]
-    then
-        echo "$msg" > "$SENDER_PIPE"
-    else
-        echo "[ERROR] : Pipe '$SENDER_PIPE' n'existe pas! "
-        return 1 # renovyer un code d'erreur si problem
-    fi
-}
-
-#fonction pour lire les messages du destinataire
-read_message(){
-    while true
-    do
-        if [[ -p "$RECEIVER_PIPE" ]]
-        then
-            if read -r msg < "$RECEIVER_PIPE"
-            then
-                echo "$msg"
-                break # ici si un msg est lu avec sucess sortir de la boucle_. fin fonction
-            fi
-        else
-            echo "[ERROR] : Pipe '$RECEIVER_PIPE' n'existe pas!"
-            exit 1
-        fi
-    done
+process_chat_output() {
+    # cette fonction va enlever le "[pseudo]" du message/ commande recu de l'utilisateur
+    # cad le premier mot d'une ligne 
+    local input="$1"
+    # enlever le premier mot
+    echo "$input" | awk '{$1=""; sub(/^ /, ""); print}'
 }
 
 #fonction executer la command 'liste'
 list_current_directory(){
-    send_message "$(ls)"
+    local lst_dir="$(ls)"
+    local res=""
+    while IFS= read -r line; do
+        res+="$line "
+    done <<< "$lst_dir"
+
+    write_to_chat_stdin "$res"
 }
 
 #fonnction pour lire un fichier --> commande 'li'
 read_file(){
     local to_read_file="$1"
-    # -f est fichier de type ordinaire != foder/special file
+    file_content=""
+    # -f est fichier de type ordinaire != folder/special file
     if [[ -f "$to_read_file" ]]
     then
-        send_message "$(cat "$to_read_file")"
+        while IFS= read -r line; do
+            write_to_chat_stdin "$line"
+        done < "$to_read_file"
     else
-        send_message "[ERROR] : '$to_read_file' n'existe pas!"
+        write_to_chat_stdin "[ERROR] : '$to_read_file' n'existe pas!"
     fi
 }
 
 #fonction pour la commande whoami
 whoami(){
-    local username="$RECEIVER"
-    send_message "$username"
+    local username="$user"
+    write_to_chat_stdin "$username"
 }
 
 #fonction pour la commande au revoir
 goodbye(){
-    send_message "Au revoir !"
+    write_to_chat_stdin "Au revoir !"
 }
 
 unknown_command(){
-    send_message "🤖 ?"
+    write_to_chat_stdin "🤖 ?"
 }
 
 check_listebot_file(){
     local user_command="$1"
-    local bot_response=$(grep "^$user_command" liste-bot.txt)
-    if [[ -n "$bot_response" ]]
-    then
-        send_message "$(echo "$bot_response" | cut -d ' ' -f2-)"
-    else
+    command_found=0
+    while IFS= read -r line; do
+        first_word=$(echo "$line" | awk '{print $1}')
+        if [[ "$first_word" == "$user_command" ]]; then
+            command_found=1
+            response=$(echo "$line" | awk '{for (i=2; i<=NF; i++) printf $i" "; print ""}')
+            write_to_chat_stdin "$response"
+            break
+        fi    
+    done < "liste-bot.txt"
+    if [[ "$command_found" == 0 ]]; then
         unknown_command
     fi
-
 }
 
-process_commands(){
-    while [[ true ]]; do
-        # lecture des message du receiver
-        msg=$(read_message)
-        # verifier si l'utilisateur a ecrit qqch
-        if [[ -z "$msg" ]]
-        then
-            continue # attendre qu'on entre une commande
-        fi
 
-        #Traitment des commands
-        #Verification si exisitent dans liste-bot.txt
-        #....
-        case "$msg" in 
+
+while true; do
+    # on verifie que le programme chat qu'on a lance existe toujours, si oui on va lire et ecrire dans ses stdin et stdout
+    if ! kill -0 "$chat_pid" 2>/dev/null; then
+        break
+    fi
+
+    # on lit le output de chat et ensuite on traite la commande
+    if read -t 1 chat_output <&${COPROC_READ}; then
+        command=$(process_chat_output "$chat_output")
+
+        case "$command" in 
             "liste") 
                  list_current_directory
             ;;
             li\ *)
-                to_read_file="$(echo "${msg#li }" | xargs)"
+                to_read_file="$(echo "${command#li }" | xargs)"
                 read_file "$to_read_file"
             ;;
             "au revoir") 
                 goodbye
-                sleep 1
-                exit 0
+                kill "$coproc_pid"
+                kill -SIGTERM "$chat_pid"
+                break
             ;;
             "qui suis-je")
             whoami
             ;;
             *)
             #else checker les autre commands
-            check_listebot_file "$msg"
+            check_listebot_file "$command"
+            ;;
         esac
-        
-    done
-    
-}
+
+
+    fi
+
+done
 
 
 
+wait $coproc_pid
 
-# MAIN --> RUN
-#initialisation du setup
-init_variables "$@"
+# Clean up
+exec {COPROC_READ}<&-
+exec {COPROC_WRITE}>&-
 
-
-create_communication_pipes
-
-trap 'cleanup_pipes; exit 0' EXIT SIGINT SIGTERM
-
-# Appel de 'process_commands' la 'main' focniton
-process_commands
-
+# quitter
+exit 0
