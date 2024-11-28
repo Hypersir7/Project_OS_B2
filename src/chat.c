@@ -14,16 +14,21 @@
 #include <poll.h>
 #include <sys/wait.h>
 
+#define PSEUDO_SIZE	 30
+#define MESSAGE_SIZE 100
+#define PATH_SIZE 71
+#define POLL_TIMEOUT -1
+
 
 // on définit les variables et fonctions necessaires :
   
-char user [30] ; // pour stocker le nom de l'utilisateur 
-char receiver [30] ; // pour stocker le nom de l'interlocuteur
+char user [PSEUDO_SIZE] ; // pour stocker le nom de l'utilisateur 
+char receiver [PSEUDO_SIZE] ; // pour stocker le nom de l'interlocuteur
 bool is_bot = false ; // pour le mode [--bot]
 bool is_manuel = false ; // pour le mode [--manuel]
 
-char send_path[71]; // pour le chemin du pipe "/tmp/user-receiver.chat"
-char receive_path[71]; // pour le chemin du pipe "/tmp/receiver-user.chat"
+char send_path[PATH_SIZE]; // pour le chemin du pipe "/tmp/user-receiver.chat"
+char receive_path[PATH_SIZE]; // pour le chemin du pipe "/tmp/receiver-user.chat"
 
 int char_shared_memory_segment_status ; // smss : shared memory segment status
 int int_counter_smss;
@@ -32,7 +37,7 @@ int fd_writer; //file discriptor pour le processus d'origine, il est globale par
 // end_send_process
 int fd_reader;
 
-char (*messages)[100]; // les pointeurs vers les segements de memeoire
+char (*messages)[MESSAGE_SIZE]; // les pointeurs vers les segements de memeoire
 int * message_counter = 0;
 
 bool is_writer_opened = false; // pour verifier si les pipes sont ouverts 
@@ -48,9 +53,9 @@ int generate_random_num(int min, int max); // genere un nombre aleatoir
 void end_send_process(int ss_status, int ss_status2); // termine le processus pere 
 void sig_send_process_handler (int sig); // s'occupe des signials du processus pere
 void sig_receive_process_handler (int sig); // s'occupe des signials du processus fils 
-void print_messages_from_sm(char (*msgs)[100], int* msg_counter); // imprime les message de sm : shared memory
-void send_message(int fd, char msg[100]);
-void receive_message(char msg[100]);
+void print_messages_from_sm(char (*msgs)[MESSAGE_SIZE], int* msg_counter); // imprime les message de sm : shared memory
+void send_message(int fd, char msg[MESSAGE_SIZE]);
+void receive_message(char msg[MESSAGE_SIZE]);
 
 
 int main(int argc, char* argv[]) {
@@ -102,7 +107,7 @@ int main(int argc, char* argv[]) {
 	}else if(p_id > 0){
 		// on cree le pipe 
 		mkfifo(send_path, 0666);
-		int message_size = 100;
+		int message_size = MESSAGE_SIZE;
 		char message[message_size];
 		
 		// on gere les signals 
@@ -141,7 +146,7 @@ int main(int argc, char* argv[]) {
                 break;
             }
 			
-        int ret = poll(&fds, 1, 100); // timeout 100ms
+        int ret = poll(&fds, 1, 100); // timeout 100ms 
 		
 		// si le poll echue
         if (ret == -1) {
@@ -211,7 +216,7 @@ int main(int argc, char* argv[]) {
 		signal(SIGHUP, sig_receive_process_handler); // on l'ignore psk le processus pere va se terminer, ce qui va causer la terminaison de 
 		// celui-ci 
 		
-		int message_size = 100;
+		int message_size = MESSAGE_SIZE;
 		size_t message_size_to_read = (size_t)message_size;
 		char message[message_size];
 		int parent_pid = getppid();
@@ -254,13 +259,17 @@ int main(int argc, char* argv[]) {
 
 			if (poll_result > 0) {
 				if (pfd.revents & POLLIN) { // on a des donnees a lire !
-					ssize_t bytes_read = read(fd_reader, message, message_size_to_read);
+					ssize_t bytes_read; 
+					do {
+						bytes_read = read(fd_reader, message, message_size_to_read);
 					if (bytes_read == -1) {
 						perror("Failed to read message");
-					} else {
+					} else if (bytes_read > 0){
 						// Successfully read data, process it
 						receive_message(message);
 					}
+					}while(bytes_read > 0);
+					
 				}
 			} else if (poll_result == 0) {
 				// ca risque pas de nous arriver psk on -1 en timeout 
