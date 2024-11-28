@@ -18,7 +18,7 @@
 #define MESSAGE_SIZE 100
 #define PATH_SIZE 71
 #define POLL_TIMEOUT -1
-
+#define MAX_MESSAGES 41
 
 // on définit les variables et fonctions necessaires :
   
@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
 	int key2 = generate_random_num(1, 1000000);
 	// la chance que les cles coincident sont tres petites et si ca arrive, l'utilisateur doit juste essayer a nouveau.
 	
-	size_t commun_space_size = 41 * 100; // 41 est le nombre de messages et 100 est la taille d'un message
+	size_t commun_space_size = MAX_MESSAGES * MESSAGE_SIZE; // 41 est le nombre de messages et 100 est la taille d'un message
 	// si on a 41 message ca veut dire qu'il y a plus de 4096 octects a afficher 
 	
 	char_shared_memory_segment_status = shmget(key, commun_space_size, IPC_CREAT|IPC_EXCL|0600);
