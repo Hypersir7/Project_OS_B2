@@ -58,6 +58,8 @@ void sig_receive_process_handler (int sig); // s'occupe des signials du processu
 void print_messages_from_sm(char (*msgs)[MESSAGE_SIZE], int* msg_counter); // imprime les message de sm : shared memory
 void send_message(int fd, char msg[MESSAGE_SIZE]);
 void receive_message(char msg[MESSAGE_SIZE]);
+void empty_pipe(int fd);
+
 
 
 int main(int argc, char* argv[]) {
@@ -117,6 +119,9 @@ int main(int argc, char* argv[]) {
 		signal(SIGPIPE, sig_send_process_handler);
 		signal(SIGINT, sig_send_process_handler);
 		signal(SIGHUP, sig_send_process_handler);
+		signal(SIGUSR1, sig_send_process_handler);
+		
+		pause(); // on attend la connection
 		
 		// on ouvre le pipe pour ecrire 
 			fd_writer = open(send_path, O_WRONLY);
@@ -127,64 +132,21 @@ int main(int argc, char* argv[]) {
 			}
 		is_writer_opened = true;
 		
-		// on va verifier si le stdin contient des infos avant d'essayer de les lire, on utilise poll.h
-		struct pollfd fds;
-
-		// Configuration pour surveiller l'entrée standard
-		fds.fd = STDIN_FILENO;
-		fds.events = POLLIN; // On est interesse par les entrees
-		
 		while(true){
-			// on veut verifier si le fils a termine, si oui ca veut dire que la connexion est coupee donc on termine aussi
-			int child_exit_status;
-            pid_t child_result = waitpid(p_id, &child_exit_status, WNOHANG); // ca ne bloque pas 
-
-            if (child_result == p_id) {
-                break;
-				
-            } else if (child_result != 0){
-                // An error occurred
-                fprintf(stderr, "waitpid failed");
-                break;
-            }
 			
-        int ret = poll(&fds, 1, 100); // timeout 100ms 
-		
-		// si le poll echue
-        if (ret == -1) {
-			// on ignore les SIGINT
-			if (errno != EINTR){
-				fprintf(stderr, "poll failed");
-				break;
-			}else{continue;} 
-        }
-		
-		// s'il n'y a rien a lire 
-        if (ret == 0) {
-            continue;
-        }
-		
-		// si on a qqch a lire 
-        if (fds.revents & POLLIN) {
-			// on considere le cas ou l'entrée est plus grande que message_size
-			while (fgets(message, message_size, stdin) != NULL) {
-				// on fait la lecture
+			if(fgets(message, message_size, stdin) != NULL){
 				send_message(fd_writer, message);
-
-				// on regarde s'il y a encore des choses a lire 
-				if (feof(stdin) || (char_array_len(message) < message_size - 1 || message[message_size - 2] == '\n')) {
-					break;
-				}
-			}
-
-			// Si jamais on EOF on termine le programme
-			if (feof(stdin)) {
+			}else{
 				break;
-			} else if (ferror(stdin)) {
-				fprintf(stderr, "stdin failed");
 			}
-		}
 			
+			
+			if (feof(stdin)) {
+					break;
+				} else if (ferror(stdin)) {
+					fprintf(stderr, "stdin failed");
+				}
+
 		}//end while
 		
 		kill(p_id, SIGTERM);
@@ -217,12 +179,9 @@ int main(int argc, char* argv[]) {
 		// on gere les signaux
 		signal(SIGINT, sig_receive_process_handler);
 		signal(SIGTERM, sig_receive_process_handler);
-		signal(SIGHUP, sig_receive_process_handler); // on l'ignore psk le processus pere va se terminer, ce qui va causer la terminaison de 
-		// celui-ci 
+		signal(SIGHUP, sig_receive_process_handler);
+		signal(SIGUSR1, sig_receive_process_handler);
 		
-		int message_size = MESSAGE_SIZE;
-		size_t message_size_to_read = (size_t)message_size;
-		char message[message_size];
 		int parent_pid = getppid();
 		
 		// avant d'ouvrir les pipes, on verifie que le pipe existe
@@ -232,23 +191,21 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		if (parent_pid != getppid()){
+			kill(getppid(), SIGTERM);
 			exit(4);
 		}
-		
+		kill(parent_pid, SIGUSR1); // envoyer un signal au pere pour lui dire que la connection est etablie
+
 		// on ouvre le pipe pour lire
 			fd_reader = open(receive_path, O_RDONLY);
 			if (fd_reader == -1) {
 			fprintf(stderr, "Failed to open the pipe");
 			close(fd_reader);
+			kill(getppid(), SIGTERM);
 			exit(0);
 			}
 			
 		is_reader_opened = true;
-		
-		struct pollfd pfd;
-		pfd.fd = fd_reader;  // File descriptor for the named pipe
-		pfd.events = POLLIN;
-		
 		
 		// si le pere se termine le fils va se terminer aussi
 		while(true){
@@ -256,46 +213,16 @@ int main(int argc, char* argv[]) {
 			if (access(receive_path, F_OK) != 0) {
 				// on va verifier si le pipe est toujours la 
 				close(fd_reader);
+				kill(getppid(), SIGTERM);
 				exit(0);
 			}
-			
-			int poll_result = poll(&pfd, 1, POLL_TIMEOUT); // attendre tout le temps (-1 timeout)
-
-			if (poll_result > 0) {
-				if (pfd.revents & POLLHUP) {
-					// disconnection 
-				break;
-				}
-				
-				if (pfd.revents & POLLIN) { // on a des donnees a lire !
-					ssize_t bytes_read; 
-					do {
-						bytes_read = read(fd_reader, message, message_size_to_read);
-					if (bytes_read == -1) {
-						perror("Failed to read message");
-					} else if (bytes_read > 0){
-						// Successfully read data, process it
-						receive_message(message);
-					}
-					}while(bytes_read > 0);
-					
-				}
-			} else if (poll_result == 0) {
-				// ca risque pas de nous arriver psk on -1 en timeout 
-				continue;
-			} else {
-				if (errno != EINTR){
-				perror("Poll Failed : ");
-				break;
-			}else{continue;} 
-			}
+			empty_pipe(fd_reader);
 			
 		}// end while
 		close(fd_reader);
+		kill(getppid(), SIGTERM);
 		
 	}
-	
-	
 	
    return 0;
 }
@@ -601,4 +528,23 @@ void receive_message(char msg[100]){
 		print_messages_from_sm(messages, message_counter);
 	}
 	fflush(stdout);
+}
+
+void empty_pipe(int fd){
+	/*
+	Cette fonction vide le tuyau en lisant les informations dedans et en les traitant correctement
+	*/
+	size_t message_size_to_read = (size_t)MESSAGE_SIZE;
+	char message[MESSAGE_SIZE];
+	ssize_t bytes_read; 
+	do {
+		bytes_read = read(fd, message, message_size_to_read);
+	if (bytes_read == -1) {
+		perror("Failed to read message");
+		kill(getppid(), SIGTERM);
+	} else if (bytes_read > 0){
+		// Successfully read data, process it
+		receive_message(message);
+	}
+	}while(bytes_read > 0);
 }
